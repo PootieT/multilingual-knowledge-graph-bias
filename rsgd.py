@@ -2,14 +2,17 @@ import torch
 from torch.optim.optimizer import Optimizer, required
 from utils import *
 
+
 def euclidean_update(p, d_p, lr):
     p.data = p.data - lr * d_p
     return p.data
 
+
 def poincare_grad(p, d_p):
-    p_sqnorm = torch.clamp(torch.sum(p.data ** 2, dim=-1, keepdim=True), 0, 1-1e-5)
+    p_sqnorm = torch.clamp(torch.sum(p.data ** 2, dim=-1, keepdim=True), 0, 1 - 1e-5)
     d_p = d_p * ((1 - p_sqnorm) ** 2 / 4).expand_as(d_p)
     return d_p
+
 
 def poincare_update(p, d_p, lr):
     v = -lr * d_p
@@ -18,12 +21,10 @@ def poincare_update(p, d_p, lr):
 
 
 class RiemannianSGD(Optimizer):
-    
     def __init__(self, params, lr=required, param_names=[]):
         defaults = dict(lr=lr)
         super(RiemannianSGD, self).__init__(params, defaults)
         self.param_names = param_names
-        
 
     def step(self, lr=None):
         loss = None
