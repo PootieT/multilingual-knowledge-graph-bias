@@ -4,7 +4,22 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 
-def import_data(language: str, keep_literals: bool = False):
+def drop_least_frequent_entities(df: pd.DataFrame, frac: float) -> pd.DataFrame:
+    df["head_count"] = df["head"].map(df["head"].value_counts())
+    df["tail_count"] = df["tail"].map(df["tail"].value_counts())
+    # add log so distribution can be more even, otherwise most will be dominated by popular entities
+    df["count"] = np.log(df["head_count"] + df["tail_count"])
+    df = df.drop(columns=["head_count", "tail_count"])
+    df = df.sample(weights=df["count"], frac=frac)
+    return df
+
+
+def import_data(
+    language: str,
+    keep_literals: bool = False,
+    subsample: float = 1.0,
+    subsample_method: str = "freq",
+):
     """
     Read in raw .ttl data and filter through data
     :param language:
@@ -34,6 +49,7 @@ def import_data(language: str, keep_literals: bool = False):
     )
     orig_len = len(df)
     if keep_literals:
+        # avoid filtering out date, year, literals that NELL dataset also include
         mask = df["tail"].str.contains(dbpedia_str) | ~df["tail"].str.contains(
             f"@{language}"
         )
@@ -45,8 +61,11 @@ def import_data(language: str, keep_literals: bool = False):
     print(
         f"Dropped {diff_len} ({(diff_len / orig_len):.4f}) of data with tail not being a resource. Now data length = {drop_len}"
     )
-    # TODO could probably avoid filtering out date, year, literals that NELL dataset also include
 
+    if subsample_method == "freq":
+        df = drop_least_frequent_entities(df, frac=subsample)
+    else:
+        df = df.sample(frac=subsample)
     train, test_valid = train_test_split(df, test_size=0.1)
     test, valid = train_test_split(test_valid, test_size=0.5)
 
@@ -69,6 +88,6 @@ def import_data(language: str, keep_literals: bool = False):
 
 if __name__ == "__main__":
     np.random.seed(42)
-    # import_data("en")
+    import_data("en", subsample=0.1, subsample_method="freq")
     # import_data("zh")
-    import_data("ky")
+    # import_data("ky", subsample=0.1, subsample_method="freq")
