@@ -8,9 +8,10 @@ def drop_least_frequent_entities(df: pd.DataFrame, frac: float) -> pd.DataFrame:
     df["head_count"] = df["head"].map(df["head"].value_counts())
     df["tail_count"] = df["tail"].map(df["tail"].value_counts())
     # add log so distribution can be more even, otherwise most will be dominated by popular entities
-    df["count"] = np.log(df["head_count"] + df["tail_count"])
+    df["count"] = df["head_count"] + df["tail_count"]
     df = df.drop(columns=["head_count", "tail_count"])
     df = df.sample(weights=df["count"], frac=frac)
+    df = df.drop(columns=["count"])
     return df
 
 
@@ -66,6 +67,8 @@ def import_data(
         df = drop_least_frequent_entities(df, frac=subsample)
     else:
         df = df.sample(frac=subsample)
+    print(f"Sampled {subsample} of the dataset.")
+
     train, test_valid = train_test_split(df, test_size=0.1)
     test, valid = train_test_split(test_valid, test_size=0.5)
 
