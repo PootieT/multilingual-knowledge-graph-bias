@@ -59,7 +59,7 @@ class Experiment:
         return er_vocab
 
     def save_model(self, model):
-        os.makedirs(os.path.dirname(self.model_save_path))
+        os.makedirs(os.path.dirname(self.model_save_path), exist_ok=True)
         torch.save(model.state_dict(), self.model_save_path)
 
     def load_model(self, model):
