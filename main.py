@@ -30,15 +30,17 @@ class Experiment:
         )
         self.model_reload_path = args.model_reload_path
 
-    def get_data_indices(self, data: Union[List, pd.DataFrame]):
+    def get_data_indices(
+        self, data: Union[List, pd.DataFrame], entity_idxs, relation_idxs
+    ):
         if type(data) == pd.DataFrame:
             data_indices = data[["head", "relation", "tail"]]
         else:
             data_indices = [
                 (
-                    self.entity_idxs[data[i][0]],
-                    self.relation_idxs[data[i][1]],
-                    self.entity_idxs[data[i][2]],
+                    entity_idxs[data[i][0]],
+                    relation_idxs[data[i][1]],
+                    entity_idxs[data[i][2]],
                 )
                 for i in range(len(data))
             ]
@@ -93,7 +95,9 @@ class Experiment:
         for i in range(10):
             hits.append([])
 
-        test_data_idxs = self.get_data_indices(data.test_data)
+        test_data_idxs = self.get_data_indices(
+            data.test_data, data.entity_idxs, data.relation_idxs
+        )
         sr_vocab = self.get_er_vocab(test_data_idxs)
 
         print("Number of data points: %d" % len(test_data_idxs))
@@ -141,7 +145,9 @@ class Experiment:
         # self.entity_idxs = {data.entities[i]: i for i in range(len(data.entities))}
         # self.relation_idxs = {data.relations[i]: i for i in range(len(data.relations))}
 
-        train_data_idxs = self.get_data_indices(data.train_data)
+        train_data_idxs = self.get_data_indices(
+            data.train_data, data.entity_idxs, data.relation_idxs
+        )
         print("Number of training data points: %d" % len(train_data_idxs))
 
         if self.model == "poincare":
@@ -224,7 +230,7 @@ class Experiment:
                     with torch.no_grad():
                         self.evaluate(model, data)
 
-            if self.args.eval_per_epoch < 1 and (
+            if self.args.eval_per_epoch <= 1 and (
                 epoch % int(1 / self.args.eval_per_epoch) == 0
             ):
                 model.eval()

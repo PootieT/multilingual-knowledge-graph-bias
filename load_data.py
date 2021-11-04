@@ -36,6 +36,15 @@ class Data:
             self.train_relations = self.get_relations(self.train_data)
             self.valid_relations = self.get_relations(self.valid_data)
             self.test_relations = self.get_relations(self.test_data)
+            self.relations = (
+                self.train_relations
+                + [i for i in self.valid_relations if i not in self.train_relations]
+                + [i for i in self.test_relations if i not in self.train_relations]
+            )
+            self.entity_idxs = {self.entities[i]: i for i in range(len(self.entities))}
+            self.relation_idxs = {
+                self.relations[i]: i for i in range(len(self.relations))
+            }
         else:  # if a large file, load as pandas dataframe
             print("dataset too large, using pandas")
             self.train_data = self.load_data_pd(data_dir, "train")
