@@ -2,6 +2,19 @@
 ## Multi-relational Poincaré Graph Embeddings
 
 
+### Language Selection
+
+For the DBpedia knowledge graphs we are looking into, we decided to pick English (en), Swedish (sv), and Indonesian (id).
+
+We picked English because it is the most relevant language of choice. We picked Swedish because Scadanavian countries 
+are known for exhibiting less gender inequality, and Swedish has the largest DBpedia collection out of all other
+Scandanavian countries (Swedish (221.1 Mb), Danish (20.1 Mb), Norwegian (32.6 Mb), Icelandic (2.6 Mb), and Faroese 
+(496 Kb)). Similarly, we picked Indonesian because it is one of countries with relatively more orthodox 
+traditions and has the most data (Indonesian (60.3 Mb), Urdu (21 Mb), Hindi (11.3 Mb), and Arabic (5.5 Mb))
+
+
+### MuRP and MuRE
+
 Multi-relational link prediction in the Poincaré ball model of hyperbolic space.
 
 <p align="center">
