@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 from main import main
 
-
+### KY KG, 30K train
 # args = {
-#     "data_dir": "data/dbpedia/zh/",
+#     "data_dir": "data/dbpedia/ky/",
 #     "model": "poincare",
 #     "num_iterations": 30,
 #     "nneg": 50,
@@ -11,12 +11,13 @@ from main import main
 #     "lr": 50,
 #     "dim": 40,
 #     "cuda": True,
-#     "model_save_path": "./model.pt",
+#     "model_save_path": "./poincare_model.pt",
 #     "model_reload_path": None,
 #     "log_interval": 1000,
 #     "eval_per_epoch": 0.2
 # }
 
+### ZH KG, 2.2M train
 # args = {
 #     "data_dir": "data/dbpedia/zh/",
 #     "model": "poincare",
@@ -32,7 +33,7 @@ from main import main
 #     "eval_per_epoch": 1,
 # }
 
-# subsampled 0.1 en
+### subsampled 0.1 en , 2.2M train
 args = {
     "data_dir": "data/dbpedia/en/",
     "model": "poincare",

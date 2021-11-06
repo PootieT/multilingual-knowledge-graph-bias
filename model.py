@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import torch
 from utils import *
@@ -33,6 +35,15 @@ class MuRP(torch.nn.Module):
             )
         )
         self.loss = torch.nn.BCEWithLogitsLoss()
+
+    def embed(
+        self, u_idx: Optional[torch.Tensor] = None, r_idx: Optional[torch.Tensor] = None
+    ):
+        assert u_idx is not None or r_idx is not None
+        if u_idx is not None:
+            return self.Eh.weight[u_idx]
+        else:
+            return torch.stack((self.Wu[r_idx], self.rvh.weight[r_idx]), dim=-1)
 
     def forward(self, u_idx, r_idx, v_idx):
         u = self.Eh.weight[u_idx]
@@ -113,6 +124,15 @@ class MuRE(torch.nn.Module):
             )
         )
         self.loss = torch.nn.BCEWithLogitsLoss()
+
+    def embed(
+        self, u_idx: Optional[torch.Tensor] = None, r_idx: Optional[torch.Tensor] = None
+    ):
+        assert u_idx is not None or r_idx is not None
+        if u_idx is not None:
+            return self.E.weight[u_idx]
+        else:
+            return torch.stack((self.Wu[r_idx], self.rv.weight[r_idx]), dim=-1)
 
     def forward(self, u_idx, r_idx, v_idx):
         u = self.E.weight[u_idx]

@@ -25,9 +25,7 @@ class Experiment:
         self.num_iterations = args.num_iterations
         self.batch_size = args.batch_size
         self.cuda = args.cuda
-        self.model_save_path = (
-            f"{args.model_save_path}/{'/'.join(args.data_dir.split('/')[1:])}model.pt"
-        )
+        self.model_save_path = f"{args.model_save_path}/{'/'.join(args.data_dir.split('/')[1:])}{self.model}_model.pt"
         self.model_reload_path = args.model_reload_path
 
     def get_data_indices(
@@ -154,6 +152,8 @@ class Experiment:
             model = MuRP(data, self.dim)
         else:
             model = MuRE(data, self.dim)
+
+        self.load_model(model)
         wandb.watch(model, log_freq=100)
 
         param_names = [name for name, param in model.named_parameters()]
@@ -164,7 +164,7 @@ class Experiment:
         if self.cuda:
             model.cuda()
 
-        er_vocab = self.get_er_vocab(train_data_idxs)
+        # er_vocab = self.get_er_vocab(train_data_idxs)
 
         print("Starting training...")
         for epoch in range(1, self.num_iterations + 1):
@@ -239,22 +239,61 @@ class Experiment:
 
         self.save_model(model)
 
+    def embed(self, data: Data, embed_file_paths: str):
+        if self.model == "poincare":
+            model = MuRP(data, self.dim)
+        else:
+            model = MuRE(data, self.dim)
+        self.load_model(model)
+        model.eval()
 
-def main(args):
-    torch.backends.cudnn.deterministic = True
-    seed = 40
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available:
-        torch.cuda.manual_seed_all(seed)
-    d = Data(data_dir=args.data_dir)
-    wandb.init(config=args)
-    wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"
-    experiment = Experiment(args)
-    experiment.train_and_eval(d)
+        for embed_file_path in embed_file_paths:
+            with open(embed_file_path, "r") as f:
+                items = [l.strip() for l in f.readlines()]
+
+            data_indices = []
+            not_found_cnt = 0
+            for item in items:
+                if embed_file_path.endswith(".rel"):
+                    data_indices.append(data.relation_idxs.get(item, -1))
+                else:
+                    data_indices.append(data.entity_idxs.get(item, -1))
+                if data_indices[-1] == -1:
+                    print(f"Item: {item} not found in vocab")
+                    not_found_cnt += 1
+            print(
+                f"In total {not_found_cnt} ({not_found_cnt/len(items)}) items are not found in vocab."
+            )
+
+            # relation embedding include both Wu and Rv/Rvh
+            emb = (
+                torch.zeros((len(items), self.dim, 2))
+                if embed_file_path.endswith(".rel")
+                else torch.zeros((len(items), self.dim))
+            )
+            with torch.no_grad():
+                print("embedding data ...")
+                batch_pbar = tqdm(
+                    range(0, len(data_indices), self.batch_size), position=0, leave=True
+                )
+                for batch_idx, j in enumerate(batch_pbar):
+                    data_batch = torch.tensor(data_indices[j : j + self.batch_size])
+                    if self.cuda:
+                        data_batch = data_batch.cuda()
+                    if embed_file_path.endswith(".rel"):
+                        emb[j : j + self.batch_size] = model.embed(r_idx=data_batch)
+                    else:
+                        emb[j : j + self.batch_size] = model.embed(u_idx=data_batch)
+
+            torch.save(
+                emb,
+                self.model_save_path.replace(
+                    "model.pt", embed_file_path.split("/")[-1] + ".pt"
+                ),
+            )
 
 
-if __name__ == "__main__":
+def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--data_dir",
@@ -273,7 +312,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_save_path",
         type=str,
-        default="./model.pt",
+        default="./dumps",
         nargs="?",
         help="path to save the trained model.",
     )
@@ -326,5 +365,45 @@ if __name__ == "__main__":
         help="how many times the model is evaluated during epoch. If less than 1, evaluates once every few epochs",
     )
 
+    parser.add_argument(
+        "--embed_only",
+        type=bool,
+        default=False,
+        nargs="?",
+        help="Whether to only provide embedding prediction.",
+    )
+    parser.add_argument(
+        "--embed_files",
+        type=Optional[str],
+        default=None,
+        nargs="?",
+        help="Whether to predict embedding for the given list of entities / relations. If entity file, the file should"
+        "end with .ent, if relation, the file should end of .rel",
+    )
+
     args = parser.parse_args()
+    if args.embed_files is not None:
+        args.embed_files = args.embed_files.split(",")
+    return args
+
+
+def main(args):
+    torch.backends.cudnn.deterministic = True
+    seed = 40
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available:
+        torch.cuda.manual_seed_all(seed)
+    d = Data(data_dir=args.data_dir)
+    experiment = Experiment(args)
+    if not args.embed_only:
+        wandb.init(config=args)
+        wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"
+        experiment.train_and_eval(d)
+    if args.embed_files:
+        experiment.embed(d, embed_file_paths=args.embed_files)
+
+
+if __name__ == "__main__":
+    args = get_parser()
     main(args)
