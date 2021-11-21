@@ -45,6 +45,9 @@ class Data:
             self.relation_idxs = {
                 self.relations[i]: i for i in range(len(self.relations))
             }
+            print(
+                f"# entities: {len(self.entity_idxs)}, # relations: {len(self.relation_idxs)}, "
+            )
         else:  # if a large file, load as pandas dataframe
             print("dataset too large, using pandas")
             self.train_data = self.load_data_pd(data_dir, "train")

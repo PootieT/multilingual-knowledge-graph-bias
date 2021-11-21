@@ -135,9 +135,9 @@ def import_data(
     print(f"Sampled {subsample} of the dataset.")
 
     print(
-        f"# unique relations: {df['relation'].unique()}, "
-        f"# unique heads: {df['head'].unique()}, "
-        f"# unique tails: {df['tail'].unique()}"
+        f"# unique relations: {len(df['relation'].unique())}, "
+        f"# unique heads: {len(df['head'].unique())}, "
+        f"# unique tails: {len(df['tail'].unique())}"
     )
 
     train, test_valid = train_test_split(df, test_size=0.1)
