@@ -281,9 +281,20 @@ class Experiment:
                     if self.cuda:
                         data_batch = data_batch.cuda()
                     if embed_file_path.endswith(".rel"):
-                        emb[j : j + self.batch_size] = model.embed(r_idx=data_batch)
+                        embeddings = model.embed(r_idx=data_batch)
+                        emb[j : j + self.batch_size] = embeddings * (
+                            (data_batch != -1)
+                            .unsqueeze(1)
+                            .unsqueeze(2)
+                            .repeat(1, embeddings.shape[1], embeddings.shape[2])
+                        )
                     else:
-                        emb[j : j + self.batch_size] = model.embed(u_idx=data_batch)
+                        embeddings = model.embed(u_idx=data_batch)
+                        emb[j : j + self.batch_size] = embeddings * (
+                            (data_batch != -1)
+                            .unsqueeze(1)
+                            .repeat(1, embeddings.shape[1])
+                        )
 
             torch.save(
                 emb,
