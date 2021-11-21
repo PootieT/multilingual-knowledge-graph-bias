@@ -127,3 +127,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+data/dbpedia/infobox-properties_lang=*
+data/dbpedia/*/test.txt
+data/dbpedia/*/train.txt
+data/dbpedia/*/valid.txt
+
+.idea/
+dumps/
+wandb/
