@@ -57,13 +57,20 @@ def drop_least_frequent_entities(
         df = df[~ppl_idx]
 
     df["head_count"] = df["head"].map(df["head"].value_counts())
-    # df["tail_count"] = df["tail"].map(df["tail"].value_counts())
+    df["tail_count"] = df["tail"].map(df["tail"].value_counts())
+    # df["rel_count"] = df["relation"].map(df["relation"].value_counts())
     # add log so distribution can be more even, otherwise most will be dominated by popular entities
-    # df["count"] = df["head_count"] + df["tail_count"]
+    df["count"] = df["head_count"] + df["tail_count"]
 
-    # df = df.drop(columns=["head_count", "tail_count"])
-    df = df.sample(weights=df["head_count"], frac=frac)
-    df = df.drop(columns=["head_count"])
+    df = df.drop(columns=["head_count", "tail_count"])
+    df = df.sample(weights=df["count"], frac=frac)
+
+    # rel_to_keep = df["relation"].value_counts().sort_values(
+    #     ascending=False
+    # ).cumsum() / len(df) < (frac)
+    # relations = rel_to_keep.index[: sum(rel_to_keep)]
+    # df = df[df["relation"].isin(relations)]
+    df = df.drop(columns=["count"])
 
     if keep_gender:
         df = df.append(df_gender)
@@ -126,6 +133,12 @@ def import_data(
     else:
         df = df.sample(frac=subsample)
     print(f"Sampled {subsample} of the dataset.")
+
+    print(
+        f"# unique relations: {df['relation'].unique()}, "
+        f"# unique heads: {df['head'].unique()}, "
+        f"# unique tails: {df['tail'].unique()}"
+    )
 
     train, test_valid = train_test_split(df, test_size=0.1)
     test, valid = train_test_split(test_valid, test_size=0.5)
