@@ -16,6 +16,6 @@ download_infobox_data() {
 }
 
 # download dbpedia in all relevant languages
-for lg in en zh ky es; do
+for lg in en zh ky id sv; do
   download_infobox_data $lg
 done
