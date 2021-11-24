@@ -3,58 +3,140 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-GENDER_SF = [
-    [
-        "male@en",
-        "Male@en",
-        "M@en",
-        "m@en",
-        "Boy@en",
-        "Boys@en",
-        "Males@en",
+GENDER_SF = {
+    "en": [
+        [
+            "male@en",
+            "m@en",
+            "boy@en",
+            "boys@en",
+            "males@en",
+        ],
+        [
+            "f@en",
+            "female@en",
+            "w@en",
+            "women@en",
+            "girls@en",
+            "girl@en",
+        ],
+        "<http://dbpedia.org/resource/Male>",
+        "<http://dbpedia.org/resource/Female>",
     ],
-    [
-        "f@en",
-        "female@en",
-        "w@en",
-        "Female@en",
-        "F@en",
-        "women@en",
-        "Girls@en",
-        "Girl@en",
-        "W@en",
+    "id": [
+        [
+            "male@id",
+            "laki-laki@id",
+            "lelaki@id",
+            "jantan@id",
+            "laki- laki@id",
+            "pria@id",
+            "<http://id.dbpedia.org/resource/jantan>",
+            "<http://id.dbpedia.org/resource/laki-laki>",
+            "<http://id.dbpedia.org/resource/pria>",
+            "<http://id.dbpedia.org/resource/lelaki>",
+        ],
+        [
+            "female@id",
+            "betina@id",
+            "perempuan@id",
+            "wanita@id",
+            "<http://id.dbpedia.org/resource/betina>",
+            "<http://id.dbpedia.org/resource/wanita>",
+            "<http://id.dbpedia.org/resource/perempuan>",
+        ],
+        "<http://id.dbpedia.org/resource/Male>",
+        "<http://id.dbpedia.org/resource/Female>",
     ],
-]
+    "sv": [
+        [
+            "herr@sv",
+            "herrar@sv",
+            "man@sv",
+            "m@sv",
+            "hingst@sv",
+            "manligt@sv",
+            "pojke@sv",
+            "hane@sv",
+            "<http://sv.dbpedia.org/resource/valack>",
+            "<http://sv.dbpedia.org/resource/hingst>",
+            "<http://sv.dbpedia.org/resource/klapphingst>",
+            "<http://sv.dbpedia.org/resource/pojke>",
+        ],
+        [
+            "kvinna@sv",
+            "dam@sv",
+            "f@sv",
+            "kvinnligt@sv",
+            "hona@sv",
+            "female@sv",
+            "sto@sv",
+            "flicka@sv",
+            "hona, trots mansröst.@sv",
+            "<http://sv.dbpedia.org/resource/sto>",
+            "<http://sv.dbpedia.org/resource/kvinna>",
+            "<http://sv.dbpedia.org/resource/flicka>",
+            "<http://sv.dbpedia.org/resource/kvinnor>",
+        ],
+        "<http://sv.dbpedia.org/resource/Man>",
+        "<http://sv.dbpedia.org/resource/Kvinna>",
+    ],
+}
+
+GENDER_RELATION = {
+    "en": "<http://dbpedia.org/property/gender>",
+    "id": "<http://id.dbpedia.org/property/gender>",
+    "sv": "<http://sv.dbpedia.org/property/kön>",
+}
+
+PROFESSION_RELATION = {
+    "en": [
+        "<http://dbpedia.org/property/profession>",
+        "<http://dbpedia.org/ontology/occupation>",
+        "<http://dbpedia.org/property/occupation>",
+        "<http://purl.org/linguistics/gold/hypernym>",  # TODO this pertains to other things as well but preserves to hierarchical structure
+    ],
+    "id": [
+        "<http://id.dbpedia.org/property/profession>",
+        "<http://id.dbpedia.org/property/occupation>",
+    ],
+    "sv": [
+        "<http://sv.dbpedia.org/property/yrke>",
+        "<http://sv.dbpedia.org/property/occupation>",
+    ],
+}
 
 
 def drop_least_frequent_entities(
     df: pd.DataFrame,
     frac: float,
+    language: str,
     keep_gender=True,
     keep_profession=True,
     keep_person=True,
 ) -> pd.DataFrame:
     if keep_gender:
-        gender_idx = df["relation"] == "<http://dbpedia.org/property/gender>"
+        gender_idx = df["relation"] == GENDER_RELATION.get(
+            language, f"<http://{language}.dbpedia.org/property/gender>"
+        )
         df_gender = df[gender_idx]
         df = df[~gender_idx]
     if keep_profession:
-        prof_idx = df["relation"].isin(
-            [
-                "<http://dbpedia.org/property/profession>",
-                "<http://dbpedia.org/ontology/occupation>",
-                "<http://dbpedia.org/property/occupation>",
-                "<http://purl.org/linguistics/gold/hypernym>",  # TODO this pertains to other things as well but preserves to hierarchical structure
-            ]
+        prof_idx = (
+            df["relation"].str.lower().isin(PROFESSION_RELATION.get(language, []))
         )
         df_prof = df[prof_idx]
         df = df[~prof_idx]
     if keep_person:
-        with open("data/dbpedia/en/person_with_gender.ent") as f:
-            person_list = [l.strip() for l in f.readlines()]
-        ppl_idx = df["head"].isin(person_list)
-        df_ppl = df[ppl_idx]
-        df = df[~ppl_idx]
+        person_w_gender_path = f"data/dbpedia/{language}/person_with_gender.ent"
+        if os.path.exists(person_w_gender_path):
+            with open(person_w_gender_path) as f:
+                person_list = [l.strip() for l in f.readlines()]
+            ppl_idx = df["head"].isin(person_list)
+            df_ppl = df[ppl_idx]
+            df = df[~ppl_idx]
+        else:
+            df_ppl = pd.DataFrame()
 
     df["head_count"] = df["head"].map(df["head"].value_counts())
     df["tail_count"] = df["tail"].map(df["tail"].value_counts())
@@ -109,10 +191,12 @@ def import_data(
     )
     orig_len = len(df)
 
-    df.loc[df["tail"].isin(GENDER_SF[0]), "tail"] = "<http://dbpedia.org/resource/Male>"
-    df.loc[
-        df["tail"].isin(GENDER_SF[1]), "tail"
-    ] = "<http://dbpedia.org/resource/Female>"
+    df.loc[df["tail"].isin(GENDER_SF.get(language, [])[0]), "tail"] = GENDER_SF[
+        language
+    ][2]
+    df.loc[df["tail"].isin(GENDER_SF.get(language, [])[1]), "tail"] = GENDER_SF[
+        language
+    ][3]
 
     if keep_literals:
         # avoid filtering out date, year, literals that NELL dataset also include
@@ -129,7 +213,7 @@ def import_data(
     )
 
     if subsample_method == "freq":
-        df = drop_least_frequent_entities(df, frac=subsample)
+        df = drop_least_frequent_entities(df, frac=subsample, language=language)
     else:
         df = df.sample(frac=subsample)
     print(f"Sampled {subsample} of the dataset.")
@@ -174,6 +258,8 @@ def remove_parse_errors(df):
 
 if __name__ == "__main__":
     np.random.seed(42)
-    import_data("en", subsample=0.1, subsample_method="freq")
+    # import_data("en", subsample=0.1, subsample_method="freq")
     # import_data("zh")
     # import_data("ky", subsample=0.1, subsample_method="freq")
+    import_data("id")
+    import_data("sv", subsample=0.2, subsample_method="freq")
