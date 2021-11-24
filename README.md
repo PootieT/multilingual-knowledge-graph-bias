@@ -77,3 +77,8 @@ If you found this codebase useful, please cite:
     }
 
 
+### Embedding data
+
+[google drive](https://drive.google.com/drive/u/0/folders/1diTb4rUtJ9siV2y4lYdkU4a3Uzr5p6Ej
+)
+
