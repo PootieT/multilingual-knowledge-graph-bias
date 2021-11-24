@@ -1,5 +1,6 @@
 from typing import Optional, List, Union
 import os
+import json
 import numpy as np
 import pandas as pd
 import torch
@@ -76,16 +77,18 @@ class Experiment:
         print(f"Hits @1: {hits_1:.5f}")
         print(f"Mean rank: {mean_rank:.5f}")
         print(f"Mean reciprocal rank: {mrr:.5f}")
+        metrics = {
+            "hits_10": hits_10,
+            "hits_3": hits_3,
+            "hits_1": hits_1,
+            "mean_rank": mean_rank,
+            "mean reciprocal rank": mrr,
+        }
+        if not self.args.eval_only:
+            wandb.log(metrics)
 
-        wandb.log(
-            {
-                "hits_10": hits_10,
-                "hits_3": hits_3,
-                "hits_1": hits_1,
-                "mean_rank": mean_rank,
-                "mean reciprocal rank": mrr,
-            }
-        )
+        with open(self.model_save_path.replace("_model.pt", "_eval.json"), "w") as f:
+            json.dump(metrics, f)
 
     def evaluate(self, model, data):
         hits = []
@@ -154,7 +157,6 @@ class Experiment:
             model = MuRE(data, self.dim)
 
         self.load_model(model)
-        wandb.watch(model, log_freq=100)
 
         param_names = [name for name, param in model.named_parameters()]
         opt = RiemannianSGD(
@@ -164,8 +166,14 @@ class Experiment:
         if self.cuda:
             model.cuda()
 
-        # er_vocab = self.get_er_vocab(train_data_idxs)
+        if self.args.eval_only:
+            model.eval()
+            with torch.no_grad():
+                self.evaluate(model, data)
+            exit()
 
+        # er_vocab = self.get_er_vocab(train_data_idxs)
+        wandb.watch(model, log_freq=100)
         print("Starting training...")
         for epoch in range(1, self.num_iterations + 1):
             model.train()
@@ -375,6 +383,13 @@ def get_parser():
         nargs="?",
         help="how many times the model is evaluated during epoch. If less than 1, evaluates once every few epochs",
     )
+    parser.add_argument(
+        "--eval_only",
+        type=bool,
+        default=False,
+        nargs="?",
+        help="Whether to only evaluate.",
+    )
 
     parser.add_argument(
         "--embed_only",
@@ -408,8 +423,9 @@ def main(args):
     d = Data(data_dir=args.data_dir)
     experiment = Experiment(args)
     if not args.embed_only:
-        wandb.init(config=args)
-        wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"
+        if not args.eval_only:
+            wandb.init(config=args)
+            wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"
         experiment.train_and_eval(d)
     if args.embed_files:
         experiment.embed(d, embed_file_paths=args.embed_files)
