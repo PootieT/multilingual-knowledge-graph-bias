@@ -326,6 +326,15 @@ def import_wikidata(subsample: float = 1.0, subsample_human: float = 1.0):
     )
 
 
+def pd_prof_and_gender_pivot(df: pd.DataFrame) -> pd.DataFrame:
+    gb_df = df.pivot_table(
+        index="occupation",
+        columns="gender",
+        values="human",
+        aggfunc=lambda x: len(x.unique()),
+    ).fillna(0)
+
+
 if __name__ == "__main__":
     np.random.seed(42)
     # import_data("en", subsample=0.1, subsample_method="freq")
