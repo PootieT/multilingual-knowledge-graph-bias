@@ -25,6 +25,7 @@ class Experiment:
         self.nneg = args.nneg
         self.num_iterations = args.num_iterations
         self.batch_size = args.batch_size
+        self.eval_batch_size = args.eval_batch_size
         self.cuda = args.cuda
         self.model_save_path = f"{args.model_save_path}/{'/'.join(args.data_dir.split('/')[1:])}{self.model}_model.pt"
         self.model_reload_path = args.model_reload_path
@@ -103,9 +104,7 @@ class Experiment:
 
         print("Number of data points: %d" % len(test_data_idxs))
 
-        batch_pbar = tqdm(
-            range(0, len(test_data_idxs), self.batch_size), position=0, leave=True
-        )
+        batch_pbar = tqdm(range(0, len(test_data_idxs)), position=0, leave=True)
         for i in batch_pbar:
             data_point = test_data_idxs[i]
             e1_idx = torch.tensor(data_point[0])
@@ -115,11 +114,22 @@ class Experiment:
                 e1_idx = e1_idx.cuda()
                 r_idx = r_idx.cuda()
                 e2_idx = e2_idx.cuda()
-            predictions_s = model.forward(
-                e1_idx.repeat(len(data.entities)),
-                r_idx.repeat(len(data.entities)),
-                range(len(data.entities)),
-            )
+
+            if len(data.entities) < self.eval_batch_size:
+                predictions_s = model.forward(
+                    e1_idx.repeat(len(data.entities)),
+                    r_idx.repeat(len(data.entities)),
+                    range(len(data.entities)),
+                )
+            else:
+                predictions_s = torch.zeros(len(data.entities))
+                for b in range(0, len(data.entities), self.eval_batch_size):
+                    b_size = min(self.eval_batch_size, len(data.entities) - b)
+                    predictions_s[b : b + b_size] = model.forward(
+                        e1_idx.repeat(b_size),
+                        r_idx.repeat(b_size),
+                        range(b, b + b_size),
+                    )
 
             filt = sr_vocab[(data_point[0], data_point[1])]
             target_value = predictions_s[e2_idx].item()
@@ -351,6 +361,13 @@ def get_parser():
     )
     parser.add_argument(
         "--batch_size", type=int, default=128, nargs="?", help="Batch size."
+    )
+    parser.add_argument(
+        "--eval_batch_size",
+        type=int,
+        default=128,
+        nargs="?",
+        help="Batch size during eval.",
     )
     parser.add_argument(
         "--nneg", type=int, default=50, nargs="?", help="Number of negative samples."
