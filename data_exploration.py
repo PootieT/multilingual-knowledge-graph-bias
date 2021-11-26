@@ -163,7 +163,7 @@ def drop_least_frequent_entities(
     return df
 
 
-def import_data(
+def import_dbpedia_data(
     language: str,
     keep_literals: bool = False,
     subsample: float = 1.0,
@@ -256,10 +256,82 @@ def remove_parse_errors(df):
     return df
 
 
+WIKI_GENDER_REL = "P21"  # https://www.wikidata.org/wiki/Property:P21
+WIKI_OCCUPATION_REL = "P106"  # https://www.wikidata.org/wiki/Property:P106
+
+
+def extract_wikidata_entities(data_path: str):
+    df = pd.read_csv(data_path, names=["head", "rel", "tail"], sep="\t")
+    df_gender = df[df["rel"] == WIKI_GENDER_REL]
+    df_occ = df[df["rel"] == WIKI_OCCUPATION_REL]
+    df_person = df[(df["rel"] == "P31") & (df["tail"] == "Q5")]
+
+    out_dir = os.path.dirname(data_path)
+    with open(f"{out_dir}/gender.ent", "w") as f:
+        f.writelines([f"{l}\n" for l in df_gender["tail"].unique().tolist()])
+
+    with open(f"{out_dir}/professions.ent", "w") as f:
+        f.writelines([f"{l}\n" for l in df_occ["tail"].unique().tolist()])
+
+    with open(f"{out_dir}/humans.ent", "w") as f:
+        f.writelines([f"{l}\n" for l in df_person["head"].unique().tolist()])
+
+    with open(f"{out_dir}/relations.rel", "w") as f:
+        f.writelines([WIKI_GENDER_REL + "\n", WIKI_OCCUPATION_REL + "\n"])
+
+    # with open(f"{out_dir}/professions.ent", "w") as f:
+    # df_union = pd.merge(left=df_gender, right=df_occ, how="inner", on="head")
+    #     f.writelines(df_union["head"].unique().tolist())
+    # df_union.to_csv(f"{out_dir}/gender_and_profession.csv")
+
+
+def import_wikidata(subsample: float = 1.0, subsample_human: float = 1.0):
+    df = pd.read_csv(
+        "data/wikidata5m_inductive/train_full.txt",
+        names=["head", "relation", "tail"],
+        sep="\t",
+    )
+    gender_idx = df["relation"] == WIKI_GENDER_REL
+    df_gender = df[gender_idx]
+    off_idx = df["relation"] == WIKI_OCCUPATION_REL
+    df_occ = df[off_idx]
+    person_idx = (df["relation"] == "P31") & (df["tail"] == "Q5")
+    df_person = df[person_idx]
+
+    df = df[(~gender_idx) & (~off_idx) & (~person_idx)]
+    df["head_count"] = df["head"].map(df["head"].value_counts())
+    df["tail_count"] = df["tail"].map(df["tail"].value_counts())
+    df["count"] = df["head_count"] + df["tail_count"]
+
+    df = df.drop(columns=["head_count", "tail_count"])
+    df = df.sample(weights=df["count"], frac=subsample)
+    df = df.drop(columns=["count"])
+
+    if subsample_human < 1.0:
+        df_person = df_person.sample(frac=subsample_human)
+        with open(f"data/wikidata5m_inductive/humans.ent", "w") as f:
+            f.writelines([f"{l}\n" for l in df_person["head"].unique().tolist()])
+
+    df = df.append(df_gender)
+    df = df.append(df_occ)
+    df = df.append(df_person)
+
+    print(
+        f"# unique relations: {len(df['relation'].unique())}, "
+        f"# unique heads: {len(df['head'].unique())}, "
+        f"# unique tails: {len(df['tail'].unique())}"
+    )
+    df.to_csv(
+        f"data/wikidata5m_inductive/train.txt", sep="\t", header=False, index=False
+    )
+
+
 if __name__ == "__main__":
     np.random.seed(42)
     # import_data("en", subsample=0.1, subsample_method="freq")
     # import_data("zh")
     # import_data("ky", subsample=0.1, subsample_method="freq")
-    import_data("id")
-    import_data("sv", subsample=0.2, subsample_method="freq")
+    # import_data("id")
+    # import_data("sv", subsample=0.2, subsample_method="freq")
+    # extract_wikidata_entities("data/wikidata5m_inductive/train_full.txt")
+    import_wikidata(0.1, 0.1)
