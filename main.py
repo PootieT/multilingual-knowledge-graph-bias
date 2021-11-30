@@ -321,6 +321,114 @@ class Experiment:
                 ),
             )
 
+    def bias_prediction(
+        self,
+        data: Data,
+        person_file_paths: str,
+        sensitive_relation: str,
+        sensitive_entities: List[str],
+        profession_relation: str,
+        profession_file_path: List[str],
+    ) -> np.array:
+        """
+        Alexa Paper bias update. Update person entity with a triple to either side of sensitive attribute,
+        then calculate
+        :param data:
+        :param person_file_paths:
+        :return:
+        """
+        if self.model == "poincare":
+            model = MuRP(data, self.dim)
+        else:
+            model = MuRE(data, self.dim)
+        self.load_model(model)
+        model.eval()
+
+        s_rel_idx = data.relation_idxs[sensitive_relation]
+        p_rel_idx = data.relation_idxs[profession_relation]
+
+        param_names = [name for name, param in model.named_parameters()]
+        opt = RiemannianSGD(
+            model.parameters(), lr=self.learning_rate, param_names=param_names
+        )
+        with open(person_file_paths, "r") as f:
+            items = [l.strip() for l in f.readlines()]
+        with open(profession_file_path, "r") as f:
+            p_ent_indices = [
+                data.entity_idxs[l.strip()]
+                for l in f.readlines()
+                if l.strip() in data.entity_idxs
+            ]
+
+        training_triples = []
+        not_found_cnt = 0
+        exist_entities = []
+        for item in items:
+            entity_index = data.entity_idxs.get(item, -1)
+            if entity_index == -1:
+                print(f"Item: {item} not found in vocab")
+                not_found_cnt += 1
+            else:
+                exist_entities.append(item)
+                for s_ent in sensitive_entities:
+                    training_triples.append(
+                        [entity_index, s_rel_idx, data.entity_idxs[s_ent]]
+                    )
+
+        with open(person_file_paths.replace(".ent", ".exist.ent"), "w") as f:
+            f.writelines([f"{e}\n" for e in exist_entities])
+        print(
+            f"In total {not_found_cnt} ({not_found_cnt/len(items)}) items are not found in vocab."
+        )
+
+        profession_scores_person = np.zeros(len(exist_entities), len(p_ent_indices))
+        batch_pbar = tqdm(
+            range(0, len(training_triples), self.batch_size), position=0, leave=True
+        )
+        for batch_idx, j in enumerate(batch_pbar):
+            pre_scores = self.get_profession_scores(model, p_rel_idx, p_ent_indices)
+            data_batch = np.array(training_triples[j : j + self.batch_size])
+
+            e1_idx = torch.tensor(data_batch[:, 0])
+            r_idx = torch.tensor(data_batch[:, 1])
+            e2_idx = torch.tensor(data_batch[:, 2])
+
+            targets = np.ones(e1_idx.shape)
+            targets = torch.DoubleTensor(targets)
+
+            opt.zero_grad()
+            if self.cuda:
+                e1_idx, r_idx, e2_idx, targets = to_cuda(e1_idx, r_idx, e2_idx, targets)
+
+            predictions = model.forward(e1_idx, r_idx, e2_idx)
+            loss = model.loss(predictions, targets)
+            loss.backward()
+            post_scores = self.get_profession_scores(model, p_rel_idx, p_ent_indices)
+            profession_scores_person[j / 2 : (j + self.batch_size) / 2] = (
+                post_scores - pre_scores
+            )
+        profession_scores_person = profession_scores_person.mean(axis=0)
+        return profession_scores_person
+
+    def get_profession_scores(self, model, p_rel_idx, p_ent_indices) -> np.array:
+        with torch.no_grad():
+            total_scores = np.zeros(self.batch_size / 2, len(p_ent_indices))
+            for i in range(0, self.batch_size + 1, 2):
+                p_triples = torch.tensor(
+                    [[e1_idx[i], p_rel_idx, p] for p in p_ent_indices]
+                )
+                e1_idx = torch.tensor(p_triples[:, 0])
+                r_idx = torch.tensor(p_triples[:, 1])
+                e2_idx = torch.tensor(p_triples[:, 2])
+                if self.cuda:
+                    e1_idx, r_idx, e2_idx, targets = to_cuda(
+                        e1_idx, r_idx, e2_idx, targets
+                    )
+                predictions = model.forward(e1_idx, r_idx, e2_idx).detach().numpy
+                scores = predictions[np.arange(len(p_triples)), p_ent_indices]
+                total_scores[i] = scores
+        return total_scores
+
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -422,6 +530,13 @@ def get_parser():
         nargs="?",
         help="Whether to predict embedding for the given list of entities / relations. If entity file, the file should"
         "end with .ent, if relation, the file should end of .rel",
+    )
+    parser.add_argument(
+        "--bias_check_only",
+        type=bool,
+        default=False,
+        nargs="?",
+        help="Whether to only provide embedding prediction.",
     )
 
     args = parser.parse_args()

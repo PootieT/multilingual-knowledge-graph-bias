@@ -40,3 +40,8 @@ def convert_tsv_to_ttl(file_path: str):
 
 
 # convert_tsv_to_ttl("data/dbpedia/en/person_with_gender.tsv")
+def to_cuda(*args):
+    """
+    Move tensors to CUDA.
+    """
+    return [None if x is None else x.cuda() for x in args]
