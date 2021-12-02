@@ -326,9 +326,9 @@ class Experiment:
         data: Data,
         person_file_paths: str,
         sensitive_relation: str,
-        sensitive_entities: List[str],
+        sensitive_file_path: str,
         profession_relation: str,
-        profession_file_path: List[str],
+        profession_file_path: str,
     ) -> np.array:
         """
         Alexa Paper bias update. Update person entity with a triple to either side of sensitive attribute,
@@ -342,7 +342,7 @@ class Experiment:
         else:
             model = MuRE(data, self.dim)
         self.load_model(model)
-        model.eval()
+        model.train()
 
         s_rel_idx = data.relation_idxs[sensitive_relation]
         p_rel_idx = data.relation_idxs[profession_relation]
@@ -359,6 +359,12 @@ class Experiment:
                 for l in f.readlines()
                 if l.strip() in data.entity_idxs
             ]
+        with open(sensitive_file_path, "r") as f:
+            s_ent_indices = [
+                data.entity_idxs[l.strip()]
+                for l in f.readlines()
+                if l.strip() in data.entity_idxs
+            ]
 
         training_triples = []
         not_found_cnt = 0
@@ -370,10 +376,8 @@ class Experiment:
                 not_found_cnt += 1
             else:
                 exist_entities.append(item)
-                for s_ent in sensitive_entities:
-                    training_triples.append(
-                        [entity_index, s_rel_idx, data.entity_idxs[s_ent]]
-                    )
+                for s_ent in s_ent_indices:
+                    training_triples.append([entity_index, s_rel_idx, s_ent])
 
         with open(person_file_paths.replace(".ent", ".exist.ent"), "w") as f:
             f.writelines([f"{e}\n" for e in exist_entities])
@@ -381,13 +385,16 @@ class Experiment:
             f"In total {not_found_cnt} ({not_found_cnt/len(items)}) items are not found in vocab."
         )
 
-        profession_scores_person = np.zeros(len(exist_entities), len(p_ent_indices))
+        profession_scores_person = np.zeros([len(exist_entities), len(p_ent_indices)])
         batch_pbar = tqdm(
             range(0, len(training_triples), self.batch_size), position=0, leave=True
         )
         for batch_idx, j in enumerate(batch_pbar):
-            pre_scores = self.get_profession_scores(model, p_rel_idx, p_ent_indices)
+            # calculate profession scores
             data_batch = np.array(training_triples[j : j + self.batch_size])
+            pre_scores = self.get_profession_scores(
+                model, data_batch, p_rel_idx, p_ent_indices
+            )
 
             e1_idx = torch.tensor(data_batch[:, 0])
             r_idx = torch.tensor(data_batch[:, 1])
@@ -401,32 +408,37 @@ class Experiment:
                 e1_idx, r_idx, e2_idx, targets = to_cuda(e1_idx, r_idx, e2_idx, targets)
 
             predictions = model.forward(e1_idx, r_idx, e2_idx)
+            model.Eh.weight.grad
             loss = model.loss(predictions, targets)
-            loss.backward()
-            post_scores = self.get_profession_scores(model, p_rel_idx, p_ent_indices)
+            # loss.backward()
+
+            post_scores = self.get_profession_scores(
+                model, data_batch, p_rel_idx, p_ent_indices
+            )
             profession_scores_person[j / 2 : (j + self.batch_size) / 2] = (
                 post_scores - pre_scores
             )
         profession_scores_person = profession_scores_person.mean(axis=0)
         return profession_scores_person
 
-    def get_profession_scores(self, model, p_rel_idx, p_ent_indices) -> np.array:
+    def get_profession_scores(
+        self, model, batch_idx, p_rel_idx, p_ent_indices
+    ) -> np.array:
         with torch.no_grad():
-            total_scores = np.zeros(self.batch_size / 2, len(p_ent_indices))
-            for i in range(0, self.batch_size + 1, 2):
+            total_scores = np.zeros([int(self.batch_size / 2), len(p_ent_indices)])
+            for i in range(0, self.batch_size - 1, 2):
                 p_triples = torch.tensor(
-                    [[e1_idx[i], p_rel_idx, p] for p in p_ent_indices]
+                    [[batch_idx[i][0], p_rel_idx, p] for p in p_ent_indices]
                 )
                 e1_idx = torch.tensor(p_triples[:, 0])
                 r_idx = torch.tensor(p_triples[:, 1])
                 e2_idx = torch.tensor(p_triples[:, 2])
                 if self.cuda:
-                    e1_idx, r_idx, e2_idx, targets = to_cuda(
-                        e1_idx, r_idx, e2_idx, targets
-                    )
-                predictions = model.forward(e1_idx, r_idx, e2_idx).detach().numpy
-                scores = predictions[np.arange(len(p_triples)), p_ent_indices]
-                total_scores[i] = scores
+                    e1_idx, r_idx, e2_idx = to_cuda(e1_idx, r_idx, e2_idx)
+                predictions = (
+                    model.forward(e1_idx, r_idx, e2_idx).detach().cpu().numpy()
+                )  # scores = predictions[np.arange(len(p_triples)), p_ent_indices]
+                total_scores[int(i / 2)] = predictions
         return total_scores
 
 
@@ -531,12 +543,34 @@ def get_parser():
         help="Whether to predict embedding for the given list of entities / relations. If entity file, the file should"
         "end with .ent, if relation, the file should end of .rel",
     )
+
     parser.add_argument(
         "--bias_check_only",
         type=bool,
         default=False,
         nargs="?",
         help="Whether to only provide embedding prediction.",
+    )
+    parser.add_argument(
+        "--person_file",
+        type=Optional[str],
+        default=None,
+        nargs="?",
+        help="person entity file",
+    )
+    parser.add_argument(
+        "--sensitive_file",
+        type=Optional[str],
+        default=None,
+        nargs="?",
+        help="sensitive entity file",
+    )
+    parser.add_argument(
+        "--profession_file",
+        type=Optional[str],
+        default=None,
+        nargs="?",
+        help="profession entity file",
     )
 
     args = parser.parse_args()
@@ -554,7 +588,17 @@ def main(args):
         torch.cuda.manual_seed_all(seed)
     d = Data(data_dir=args.data_dir)
     experiment = Experiment(args)
-    if not args.embed_only:
+    if args.bias_check_only:
+        experiment.bias_prediction(
+            d,
+            args.person_file,
+            "P21",
+            args.sensitive_file,
+            "P106",
+            args.profession_file,
+        )
+        exit()
+    if not args.embed_only and not args.predict_only:
         if not args.eval_only:
             wandb.init(config=args)
             wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"
