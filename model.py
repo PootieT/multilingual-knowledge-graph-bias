@@ -8,6 +8,14 @@ from utils import *
 class MuRP(torch.nn.Module):
     def __init__(self, d, dim):
         super(MuRP, self).__init__()
+        self.input_dummy = torch.nn.Parameter(
+            torch.tensor(
+                np.random.uniform(-1, 1, (len(d.entities), dim)),
+                dtype=torch.double,
+                requires_grad=True,
+                device="cuda",
+            )
+        )
         self.Eh = torch.nn.Embedding(len(d.entities), dim, padding_idx=0)
         self.Eh.weight.data = 1e-3 * torch.randn(
             (len(d.entities), dim), dtype=torch.double, device="cuda"
@@ -46,6 +54,7 @@ class MuRP(torch.nn.Module):
             return torch.stack((self.Wu[r_idx], self.rvh.weight[r_idx]), dim=-1)
 
     def forward(self, u_idx, r_idx, v_idx):
+        self.input_dummy.data = u_idx
         u = self.Eh.weight[u_idx]
         v = self.Eh.weight[v_idx]
         Ru = self.Wu[r_idx]
