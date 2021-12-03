@@ -408,9 +408,8 @@ class Experiment:
                 e1_idx, r_idx, e2_idx, targets = to_cuda(e1_idx, r_idx, e2_idx, targets)
 
             predictions = model.forward(e1_idx, r_idx, e2_idx)
-            model.Eh.weight.grad
             loss = model.loss(predictions, targets)
-            # loss.backward()
+            loss.backward()
 
             post_scores = self.get_profession_scores(
                 model, data_batch, p_rel_idx, p_ent_indices
@@ -418,6 +417,10 @@ class Experiment:
             profession_scores_person[j / 2 : (j + self.batch_size) / 2] = (
                 post_scores - pre_scores
             )
+
+            # reload original model because we don't want to change the weights between batches
+            self.load_model(model)
+
         profession_scores_person = profession_scores_person.mean(axis=0)
         return profession_scores_person
 
