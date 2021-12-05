@@ -1,3 +1,4 @@
+import random
 from typing import Optional, List, Union
 import os
 import json
@@ -10,6 +11,7 @@ from collections import defaultdict
 
 from tqdm import tqdm
 
+from data_exploration import append_wikidata_alias
 from load_data import Data
 from model import *
 from rsgd import *
@@ -27,7 +29,7 @@ class Experiment:
         self.batch_size = args.batch_size
         self.eval_batch_size = args.eval_batch_size
         self.cuda = args.cuda
-        self.model_save_path = f"{args.model_save_path}/{'/'.join(args.data_dir.split('/')[1:])}{self.model}_model.pt"
+        self.model_save_path = f"{args.model_save_path}/{'/'.join(args.data_dir.split('/')[1:])}/{self.model}_model.pt"
         self.model_reload_path = args.model_reload_path
 
     def get_data_indices(
@@ -91,7 +93,7 @@ class Experiment:
         with open(self.model_save_path.replace("_model.pt", "_eval.json"), "w") as f:
             json.dump(metrics, f)
 
-    def evaluate(self, model, data):
+    def evaluate(self, model, data, partial_eval=1.0):
         hits = []
         ranks = []
         for i in range(10):
@@ -100,6 +102,10 @@ class Experiment:
         test_data_idxs = self.get_data_indices(
             data.test_data, data.entity_idxs, data.relation_idxs
         )
+        if partial_eval != 1.0:
+            test_data_idxs = random.sample(
+                test_data_idxs, k=int(len(test_data_idxs) * partial_eval)
+            )
         sr_vocab = self.get_er_vocab(test_data_idxs)
 
         print("Number of data points: %d" % len(test_data_idxs))
@@ -179,7 +185,7 @@ class Experiment:
         if self.args.eval_only:
             model.eval()
             with torch.no_grad():
-                self.evaluate(model, data)
+                self.evaluate(model, data, partial_eval=self.args.partial_eval)
             exit()
 
         # er_vocab = self.get_er_vocab(train_data_idxs)
@@ -246,14 +252,14 @@ class Experiment:
                 ):
                     model.eval()
                     with torch.no_grad():
-                        self.evaluate(model, data)
+                        self.evaluate(model, data, partial_eval=self.args.partial_eval)
 
             if self.args.eval_per_epoch <= 1 and (
                 epoch % int(1 / self.args.eval_per_epoch) == 0
             ):
                 model.eval()
                 with torch.no_grad():
-                    self.evaluate(model, data)
+                    self.evaluate(model, data, partial_eval=self.args.partial_eval)
 
         self.save_model(model)
 
@@ -325,6 +331,7 @@ class Experiment:
         self,
         data: Data,
         person_file_paths: str,
+        person_subsample_frac: float,
         sensitive_relation: str,
         sensitive_file_path: str,
         profession_relation: str,
@@ -354,11 +361,10 @@ class Experiment:
         with open(person_file_paths, "r") as f:
             items = [l.strip() for l in f.readlines()]
         with open(profession_file_path, "r") as f:
-            p_ent_indices = [
-                data.entity_idxs[l.strip()]
-                for l in f.readlines()
-                if l.strip() in data.entity_idxs
+            p_entities = [
+                l.strip() for l in f.readlines() if l.strip() in data.entity_idxs
             ]
+            p_ent_indices = [data.entity_idxs[e] for e in p_entities]
         with open(sensitive_file_path, "r") as f:
             s_ent_indices = [
                 data.entity_idxs[l.strip()]
@@ -370,14 +376,21 @@ class Experiment:
         not_found_cnt = 0
         exist_entities = []
         for item in items:
-            entity_index = data.entity_idxs.get(item, -1)
-            if entity_index == -1:
-                print(f"Item: {item} not found in vocab")
+            if item not in data.entity_idxs:
+                # print(f"Item: {item} not found in vocab")
                 not_found_cnt += 1
             else:
                 exist_entities.append(item)
-                for s_ent in s_ent_indices:
-                    training_triples.append([entity_index, s_rel_idx, s_ent])
+
+        exist_entities = random.choices(
+            exist_entities, k=int(len(exist_entities) * person_subsample_frac)
+        )
+        print(
+            f"Subsampled {person_subsample_frac} from existing entities: {len(exist_entities)} people entity left"
+        )
+        for person in exist_entities:
+            for s_ent in s_ent_indices:
+                training_triples.append([data.entity_idxs[person], s_rel_idx, s_ent])
 
         with open(person_file_paths.replace(".ent", ".exist.ent"), "w") as f:
             f.writelines([f"{e}\n" for e in exist_entities])
@@ -393,14 +406,16 @@ class Experiment:
             # calculate profession scores
             data_batch = np.array(training_triples[j : j + self.batch_size])
             pre_scores = self.get_profession_scores(
-                model, data_batch, p_rel_idx, p_ent_indices
+                model, data_batch, p_rel_idx, p_ent_indices, len(s_ent_indices)
             )
 
             e1_idx = torch.tensor(data_batch[:, 0])
             r_idx = torch.tensor(data_batch[:, 1])
             e2_idx = torch.tensor(data_batch[:, 2])
+            # pre_emb = model.Eh.weight[e1_idx]
 
             targets = np.ones(e1_idx.shape)
+            # targets[list(range(1, len(e1_idx), 2))] = 0.0
             targets = torch.DoubleTensor(targets)
 
             opt.zero_grad()
@@ -409,33 +424,61 @@ class Experiment:
 
             predictions = model.forward(e1_idx, r_idx, e2_idx)
             loss = model.loss(predictions, targets)
+            emb_before = model.E.weight[e1_idx]
             loss.backward()
-
+            emb_after = model.E.weight[e1_idx]
+            if hasattr(model, "Eh"):
+                model.Eh.weight.requires_grad = False
+                model.Eh.weight[e1_idx] += model.Eh.weight.grad[e1_idx] * 10
+                model.Eh.weight.requires_grad = True
+            else:
+                model.E.weight.requires_grad = False
+                model.E.weight[e1_idx] += model.E.weight.grad[e1_idx] * 10
+                model.E.weight.requires_grad = True
+            # post_emb = model.Eh.weight[e1_idx]
             post_scores = self.get_profession_scores(
-                model, data_batch, p_rel_idx, p_ent_indices
+                model, data_batch, p_rel_idx, p_ent_indices, len(s_ent_indices)
             )
-            profession_scores_person[j / 2 : (j + self.batch_size) / 2] = (
-                post_scores - pre_scores
-            )
+            profession_scores_person[
+                int(j / len(s_ent_indices)) : int(
+                    (j + self.batch_size) / len(s_ent_indices)
+                )
+            ] = (post_scores - pre_scores)
 
             # reload original model because we don't want to change the weights between batches
             self.load_model(model)
 
         profession_scores_person = profession_scores_person.mean(axis=0)
-        return profession_scores_person
+        df = pd.DataFrame(
+            {"profession": p_entities, "scores": profession_scores_person}
+        )
+        df = df.sort_values(by=["scores"], ascending=False)
+        df = append_wikidata_alias(df)
+        df.to_csv(
+            f"{self.args.data_dir}/{self.model}_profession_name_bias_{person_subsample_frac}_{sensitive_file_path.split('/')[-1].replace('.ent','')}.csv",
+            index=False,
+        )
 
     def get_profession_scores(
-        self, model, batch_idx, p_rel_idx, p_ent_indices
+        self,
+        model,
+        batch_idx,
+        p_rel_idx,
+        p_ent_indices,
+        num_sensitive_attributes: int = 2,
     ) -> np.array:
         with torch.no_grad():
-            total_scores = np.zeros([int(self.batch_size / 2), len(p_ent_indices)])
-            for i in range(0, self.batch_size - 1, 2):
+            bs = batch_idx.shape[0]
+            total_scores = np.zeros(
+                [int(bs / num_sensitive_attributes), len(p_ent_indices)]
+            )
+            for i in range(0, bs - 1, num_sensitive_attributes):
                 p_triples = torch.tensor(
                     [[batch_idx[i][0], p_rel_idx, p] for p in p_ent_indices]
                 )
-                e1_idx = torch.tensor(p_triples[:, 0])
-                r_idx = torch.tensor(p_triples[:, 1])
-                e2_idx = torch.tensor(p_triples[:, 2])
+                e1_idx = p_triples[:, 0].clone()
+                r_idx = p_triples[:, 1].clone()
+                e2_idx = p_triples[:, 2].clone()
                 if self.cuda:
                     e1_idx, r_idx, e2_idx = to_cuda(e1_idx, r_idx, e2_idx)
                 predictions = (
@@ -524,6 +567,13 @@ def get_parser():
         help="how many times the model is evaluated during epoch. If less than 1, evaluates once every few epochs",
     )
     parser.add_argument(
+        "--partial_eval",
+        type=float,
+        default=1.0,
+        nargs="?",
+        help="what fraction of evaluation data is evaluated",
+    )
+    parser.add_argument(
         "--eval_only",
         type=bool,
         default=False,
@@ -562,6 +612,13 @@ def get_parser():
         help="person entity file",
     )
     parser.add_argument(
+        "--person_subsample_frac",
+        type=float,
+        default=1.0,
+        nargs="?",
+        help="fraction of people to select",
+    )
+    parser.add_argument(
         "--sensitive_file",
         type=Optional[str],
         default=None,
@@ -595,13 +652,14 @@ def main(args):
         experiment.bias_prediction(
             d,
             args.person_file,
+            args.person_subsample_frac,
             "P21",
             args.sensitive_file,
             "P106",
             args.profession_file,
         )
         exit()
-    if not args.embed_only and not args.predict_only:
+    if not args.embed_only:
         if not args.eval_only:
             wandb.init(config=args)
             wandb.run.name = f"{args.model}_{'_'.join(args.data_dir.split('/')[1:])}"

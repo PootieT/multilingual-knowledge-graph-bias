@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
 GENDER_SF = {
     "en": [
@@ -271,7 +272,14 @@ def extract_wikidata_entities(data_path: str):
         f.writelines([f"{l}\n" for l in df_gender["tail"].unique().tolist()])
 
     with open(f"{out_dir}/professions.ent", "w") as f:
-        f.writelines([f"{l}\n" for l in df_occ["tail"].unique().tolist()])
+        # get professions with at least 10 people
+        # f.writelines([f"{l}\n" for l in df_occ["tail"].unique().tolist()])
+        occs = (
+            df_occ["tail"]
+            .value_counts()[df_occ["tail"].value_counts() > 10]
+            .index.tolist()
+        )
+        f.writelines([f"{l}\n" for l in occs])
 
     with open(f"{out_dir}/humans.ent", "w") as f:
         f.writelines([f"{l}\n" for l in df_person["head"].unique().tolist()])
@@ -285,9 +293,13 @@ def extract_wikidata_entities(data_path: str):
     # df_union.to_csv(f"{out_dir}/gender_and_profession.csv")
 
 
-def import_wikidata(subsample: float = 1.0, subsample_human: float = 1.0):
+def import_wikidata(
+    subsample: float = 1.0,
+    subsample_human: float = 1.0,
+    path: str = "data/wikidata5m_inductive",
+):
     df = pd.read_csv(
-        "data/wikidata5m_inductive/train_full.txt",
+        f"{path}/train_full.txt",
         names=["head", "relation", "tail"],
         sep="\t",
     )
@@ -299,17 +311,18 @@ def import_wikidata(subsample: float = 1.0, subsample_human: float = 1.0):
     df_person = df[person_idx]
 
     df = df[(~gender_idx) & (~off_idx) & (~person_idx)]
-    df["head_count"] = df["head"].map(df["head"].value_counts())
-    df["tail_count"] = df["tail"].map(df["tail"].value_counts())
-    df["count"] = df["head_count"] + df["tail_count"]
+    # df["head_count"] = df["head"].map(df["head"].value_counts())
+    # df["tail_count"] = df["tail"].map(df["tail"].value_counts())
+    # df["count"] = df["head_count"] + df["tail_count"]
 
-    df = df.drop(columns=["head_count", "tail_count"])
-    df = df.sample(weights=df["count"], frac=subsample)
-    df = df.drop(columns=["count"])
+    # df = df.drop(columns=["head_count", "tail_count"])
+    # df = df.sample(weights=df["count"], frac=subsample)
+    # df = df.drop(columns=["count"])
+    df = df.sample(frac=subsample)
 
     if subsample_human < 1.0:
         df_person = df_person.sample(frac=subsample_human)
-        with open(f"data/wikidata5m_inductive/humans.ent", "w") as f:
+        with open(f"{path}/humans.ent", "w") as f:
             f.writelines([f"{l}\n" for l in df_person["head"].unique().tolist()])
 
     df = df.append(df_gender)
@@ -321,9 +334,7 @@ def import_wikidata(subsample: float = 1.0, subsample_human: float = 1.0):
         f"# unique heads: {len(df['head'].unique())}, "
         f"# unique tails: {len(df['tail'].unique())}"
     )
-    df.to_csv(
-        f"data/wikidata5m_inductive/train.txt", sep="\t", header=False, index=False
-    )
+    df.to_csv(f"{path}/train.txt", sep="\t", header=False, index=False)
 
 
 def pd_prof_and_gender_pivot(df: pd.DataFrame) -> pd.DataFrame:
@@ -335,6 +346,53 @@ def pd_prof_and_gender_pivot(df: pd.DataFrame) -> pd.DataFrame:
     ).fillna(0)
 
 
+def append_wikidata_alias(df: pd.DataFrame) -> pd.DataFrame:
+    id2name = {}
+    with open("data/wikidata5m_inductive/wikidata5m_alias/wikidata5m_entity.txt") as f:
+        for line in tqdm(f):
+            line = line.strip().split("\t")
+            id2name[line[0]] = line[1]
+    df["profession_name"] = df["profession"].apply(
+        lambda x: id2name.get(x, "Not Found")
+    )
+    return df
+
+
+def append_wikidata_train_count():
+    df = pd.read_csv(
+        "data/wikidata5m_transductive/euclidean_profession_name_bias_0.01_gender_male.csv"
+    )
+    df_train = pd.read_csv(
+        "data/wikidata5m_transductive/train.txt",
+        sep="\t",
+        names=["head", "rel", "tail"],
+    )
+    for i, p in tqdm(enumerate(df["profession"])):
+        df.loc[i, "count"] = sum(df_train["tail"] == p)
+    # pass
+    df.to_csv(
+        "data/wikidata5m_transductive/euclidean_profession_name_bias_0.01_gender_male.csv"
+    )
+
+
+def append_wikidata_deviation(data_dir: str, file: str):
+    df = pd.read_csv(f"{data_dir}/{file}")
+
+
+def append_whole_wikidata_male_female_table():
+    df = pd.read_csv("data/wikidata5m_inductive/male_female_occupation_count.csv")
+    df["profession"] = df["occupation"].apply(lambda x: x.split("/")[-1])
+    df = append_wikidata_alias(df)
+    df["m2f_ratio"] = df["male"] / df["female"]
+    df = df.sort_values(["m2f_ratio"], ascending=False)
+    df = df[df["male"] + df["female"] > 10]
+    df = df.drop(columns=["occupation"])
+    df.to_csv(
+        "data/wikidata5m_inductive/male_female_occupation_count_filtered.csv",
+        index=False,
+    )
+
+
 if __name__ == "__main__":
     np.random.seed(42)
     # import_data("en", subsample=0.1, subsample_method="freq")
@@ -342,5 +400,7 @@ if __name__ == "__main__":
     # import_data("ky", subsample=0.1, subsample_method="freq")
     # import_data("id")
     # import_data("sv", subsample=0.2, subsample_method="freq")
-    # extract_wikidata_entities("data/wikidata5m_inductive/train_full.txt")
-    import_wikidata(0.1, 0.1)
+    # extract_wikidata_entities("data/wikidata5m_transductive/train_full.txt")
+    # import_wikidata(0.1, 0.1, "data/wikidata5m_transductive")
+    append_wikidata_train_count()
+    # append_whole_wikidata_male_female_table()
