@@ -36,15 +36,20 @@ from main import main, get_parser
 
 ### subsampled 0.1 en , 2.2M train
 args = get_parser()
-args.data_dir = f"data/dbpedia/en/"
-args.model = "poincare"
-args.num_iterations = 20
+# args.data_dir = f"data/dbpedia/en/"
+args.data_dir = f"data/wikidata5m_transductive"
+# args.model = "poincare"
+args.model = "euclidean"
+args.num_iterations = 6
 args.nneg = 50
-args.batch_size = 2048
+args.batch_size = 8192
+args.eval_batch_size = 524288
 args.lr = 50
 args.dim = 40
 args.cuda = True
-args.log_interval = 400
+args.log_interval = 25
 args.eval_per_epoch = 1
+# args.eval_only = True
+args.partial_eval = 0.05
 
 main(args)
