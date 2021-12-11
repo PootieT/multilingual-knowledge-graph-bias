@@ -11,7 +11,14 @@ from collections import defaultdict
 
 from tqdm import tqdm
 
-from data_exploration import append_wikidata_alias
+from data_exploration import (
+    append_wikidata_alias,
+    append_wikidata_equivalent,
+    append_FB15k_train_count,
+    GENDER_RELATION,
+    PROFESSION_RELATION,
+    append_dbpedia_train_count,
+)
 from load_data import Data
 from model import *
 from rsgd import *
@@ -245,7 +252,7 @@ class Experiment:
                 )
 
                 if batch_idx % self.args.log_interval == 0:
-                    wandb.log({"train loss": loss})
+                    wandb.log({"epoch": epoch, "train loss": loss})
 
                 if self.args.eval_per_epoch > 1 and (
                     batch_idx % int(num_batches / self.args.eval_per_epoch) == 0
@@ -334,6 +341,7 @@ class Experiment:
         person_subsample_frac: float,
         sensitive_relation: str,
         sensitive_file_path: str,
+        sensitive_in_order: bool,
         profession_relation: str,
         profession_file_path: str,
     ) -> np.array:
@@ -412,9 +420,9 @@ class Experiment:
             e1_idx = torch.tensor(data_batch[:, 0])
             r_idx = torch.tensor(data_batch[:, 1])
             e2_idx = torch.tensor(data_batch[:, 2])
-            # pre_emb = model.Eh.weight[e1_idx]
 
             targets = np.ones(e1_idx.shape)
+            ## Uncomment below line for second method of gradient calculation
             # targets[list(range(1, len(e1_idx), 2))] = 0.0
             targets = torch.DoubleTensor(targets)
 
@@ -422,20 +430,53 @@ class Experiment:
             if self.cuda:
                 e1_idx, r_idx, e2_idx, targets = to_cuda(e1_idx, r_idx, e2_idx, targets)
 
-            predictions = model.forward(e1_idx, r_idx, e2_idx)
-            loss = model.loss(predictions, targets)
-            emb_before = model.E.weight[e1_idx]
-            loss.backward()
-            emb_after = model.E.weight[e1_idx]
-            if hasattr(model, "Eh"):
-                model.Eh.weight.requires_grad = False
-                model.Eh.weight[e1_idx] += model.Eh.weight.grad[e1_idx] * 10
-                model.Eh.weight.requires_grad = True
-            else:
-                model.E.weight.requires_grad = False
-                model.E.weight[e1_idx] += model.E.weight.grad[e1_idx] * 10
-                model.E.weight.requires_grad = True
-            # post_emb = model.Eh.weight[e1_idx]
+            #### Method 1 of calculating bias, subtract female gradient from male
+            #### and update one person at a time, for this to run, use batch_size=2
+            #### and gender.ent file contain male and female entity in that order
+            for i in range(e1_idx.shape[0]):
+                predictions = model.forward(e1_idx[i], r_idx[i], e2_idx[i])
+                loss = model.loss(predictions, targets[i])
+                loss.backward()
+                if i == 0:
+                    if self.model == "euclidean":
+                        male_grad = model.E.weight.grad[e1_idx[i]].clone()
+                    else:
+                        male_grad = model.Eh.weight.grad[e1_idx[i]].clone()
+                    opt.zero_grad()
+                else:
+                    if self.model == "euclidean":
+                        female_grad = model.E.weight.grad[e1_idx[i]]
+                        grad = (
+                            male_grad - female_grad
+                            if sensitive_in_order
+                            else female_grad - male_grad
+                        )
+                        model.E.weight.requires_grad = False
+                        model.E.weight[e1_idx[i]] = euclidean_update(
+                            model.E.weight[e1_idx[i]], grad.data, 0.01
+                        )
+                        model.E.weight.requires_grad = True
+                    else:
+                        # Reimannian SGD
+                        female_grad = model.Eh.weight.grad[e1_idx[i]]
+                        grad = (
+                            male_grad - female_grad
+                            if sensitive_in_order
+                            else female_grad - male_grad
+                        )
+                        model.Eh.weight.requires_grad = False
+                        d_p = poincare_grad(model.Eh.weight[e1_idx[i]], grad.data)
+                        model.Eh.weight[e1_idx[i]] = poincare_update(
+                            model.Eh.weight[e1_idx[i]], d_p, 0.01
+                        )
+                        model.Eh.weight.requires_grad = True
+
+            #### Second method of calculation, setting male target to 1 and female target to 0. This is much faster
+            #### because batch size does not need to be one, and can be generalized to multiple sensitvie attributes.
+            # predictions = model.forward(e1_idx, r_idx, e2_idx)
+            # loss = model.loss(predictions, targets)
+            # loss.backward()
+            # opt.step()
             post_scores = self.get_profession_scores(
                 model, data_batch, p_rel_idx, p_ent_indices, len(s_ent_indices)
             )
@@ -453,10 +494,36 @@ class Experiment:
             {"profession": p_entities, "scores": profession_scores_person}
         )
         df = df.sort_values(by=["scores"], ascending=False)
-        df = append_wikidata_alias(df)
+        if "FB15k" in self.args.data_dir:
+            df = append_wikidata_equivalent(df)
+        if "FB15K" in self.args.data_dir or "wikidata" in self.args.data_dir:
+            df = append_wikidata_alias(df)
+        if "FB15k" in self.args.data_dir:
+            df = append_FB15k_train_count(df)
+            df = df.drop(columns=["profession"])
+
+        if "dbpedia" in self.args.data_dir:
+            df = append_dbpedia_train_count(df, self.args.data_dir.split("/")[-1])
+
+        df["scores"] = df["scores"].round(8)
+        df = df.fillna(0)
+        df["count"] = df["count"].astype(int)
+        if "male_count" in df.columns:
+            df["male_count"] = df["male_count"].astype(int)
+        if "female_count" in df.columns:
+            df["female_count"] = df["female_count"].astype(int)
+        df = df.rename(
+            columns={
+                "scores": "Scores",
+                "profession_name": "Profession",
+                "count": "Count",
+                "male_count": "Male Count",
+                "female_count": "Female Count",
+            }
+        )
         df.to_csv(
-            f"{self.args.data_dir}/{self.model}_profession_name_bias_{person_subsample_frac}_{sensitive_file_path.split('/')[-1].replace('.ent','')}.csv",
-            index=False,
+            f"{self.args.data_dir}/{self.model}_profession_name_bias_{person_subsample_frac}_{sensitive_file_path.split('/')[-1].replace('.ent', '')}{'_reverse' if not sensitive_in_order else ''}.csv",
+            index=True,
         )
 
     def get_profession_scores(
@@ -626,6 +693,13 @@ def get_parser():
         help="sensitive entity file",
     )
     parser.add_argument(
+        "--sensitive_in_order",
+        type=bool,
+        default=True,
+        nargs="?",
+        help="Whether to only provide embedding prediction.",
+    )
+    parser.add_argument(
         "--profession_file",
         type=Optional[str],
         default=None,
@@ -649,13 +723,27 @@ def main(args):
     d = Data(data_dir=args.data_dir)
     experiment = Experiment(args)
     if args.bias_check_only:
+        if "wikidata" in args.data_dir:
+            sensitive_rel, occupation_rel = "P21", "P106"
+        elif "FB15K" in args.data_dir:
+            sensitive_rel, occupation_rel = (
+                "/people/person/gender",
+                "/people/person/profession",
+            )
+        else:  # dbpedia
+            language = args.data_dir.split("/")[-1]
+            sensitive_rel, occupation_rel = (
+                GENDER_RELATION[language],
+                PROFESSION_RELATION[language][0],
+            )
         experiment.bias_prediction(
             d,
             args.person_file,
             args.person_subsample_frac,
-            "P21",
+            sensitive_rel,
             args.sensitive_file,
-            "P106",
+            args.sensitive_in_order,
+            occupation_rel,
             args.profession_file,
         )
         exit()

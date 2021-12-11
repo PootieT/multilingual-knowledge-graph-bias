@@ -1,5 +1,5 @@
 
-## Multi-relational Poincaré Graph Embeddings
+## Knowledge Graph Embedding Bias Analysis with Poincare and Euclidean embedding methods
 
 
 ### Language Selection
@@ -12,73 +12,37 @@ Scandanavian countries (Swedish (221.1 Mb), Danish (20.1 Mb), Norwegian (32.6 Mb
 (496 Kb)). Similarly, we picked Indonesian because it is one of countries with relatively more orthodox 
 traditions and has the most data (Indonesian (60.3 Mb), Urdu (21 Mb), Hindi (11.3 Mb), and Arabic (5.5 Mb))
 
+### Data Preprocessing
 
-### MuRP and MuRE
-
-Multi-relational link prediction in the Poincaré ball model of hyperbolic space.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/ibalazevic/multirelational-poincare/master/murp_vs_mure.png"/ width=700>
-</p>
+To run data preprocessing code, see in main functions in `data_explorations.py`, specifically, `import_dbpedia_data` 
+for dbpedia datasets.
 
 
-This codebase contains PyTorch implementation of the paper:
+### To train a model
 
-> Multi-relational Poincaré Graph Embeddings.
-> Ivana Balažević, Carl Allen, and Timothy M. Hospedales.
-> Neural Information Processing Systems (NeurIPS), 2019.
-> [[Paper]](https://arxiv.org/pdf/1905.09791.pdf)
-
-### Link Prediction Results
-
-Model | Dataset | dim | MRR | Hits@10 | Hits@3 | Hits@1
-:--- | :--- | :---: | :---: | :---: | :---: | :---:
-MuRP | WN18RR | 40 |  0.477 | 0.555 | 0.489 | 0.438
-MuRP | WN18RR | 200 |  0.481 | 0.566 | 0.495 | 0.440
-MuRE | WN18RR | 40 |  0.459 | 0.528 | 0.474 | 0.429
-MuRE | WN18RR | 200 |  0.475 | 0.554 | 0.487 | 0.436
-MuRP | FB15k-237 | 40| 0.324 | 0.506 | 0.356 | 0.235
-MuRP | FB15k-237 | 200| 0.335 | 0.518 | 0.367 | 0.243
-MuRE | FB15k-237 | 40| 0.315 | 0.493 | 0.346 | 0.227
-MuRE | FB15k-237 | 200| 0.336 | 0.521 | 0.370 | 0.245
-
-
-### Running a model
-
-To run the model, execute the following command:
-
-     CUDA_VISIBLE_DEVICES=0 python main.py --model poincare --dataset WN18RR --num_iterations 500 
-                                           --nneg 50 --batch_size 128 --lr 50 --dim 40 
+To train a model, see code in `run_train.py`
 
 Available datasets are:
     
     FB15k-237
     WN18RR
-    
-To reproduce the results from the paper, use learning rate 50 for WN18RR and learning rate 10 for FB15k-237.
+    DBpedia-english
+    DBpedia-Swedish
+    DBpedia-Indonesian
+    (and other languages using `/download_datasets.sh` file
 
+Our training statistics is automatically logged in WanDB. To install:
+```bash
+pip install wandb
+wandb login
+```
 
-### Requirements
+### To Compute Bias
+First you need three files for the dataset:
+- humans.ent
+- gender.ent
+- professions.ent
 
-The codebase is implemented in Python 3.6.6. Required packages are:
+To generate those, run `data_exploration.extract_dbpedia_entities`
 
-    numpy      1.15.1
-    pytorch    1.0.1
-    
-### Citation
-
-If you found this codebase useful, please cite:
-
-    @inproceedings{balazevic2019multi,
-    title={Multi-relational Poincar$\backslash$'e Graph Embeddings},
-    author={Bala{\v{z}}evi{\'c}, Ivana and Allen, Carl and Hospedales, Timothy},
-    booktitle={Advances in Neural Information Processing Systems},
-    year={2019}
-    }
-
-
-### Embedding data
-
-[google drive](https://drive.google.com/drive/u/0/folders/1diTb4rUtJ9siV2y4lYdkU4a3Uzr5p6Ej
-)
-
+Then, see code in `run_predict.py`
