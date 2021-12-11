@@ -46,3 +46,7 @@ First you need three files for the dataset:
 To generate those, run `data_exploration.extract_dbpedia_entities`
 
 Then, see code in `run_predict.py`
+
+
+### Disclaimer
+The work we implemented is followed after the original [MuRP repo](https://github.com/ibalazevic/multirelational-poincare)
